@@ -1,12 +1,14 @@
 rai:
   version: 0.2
-  image: cwpearson/2017fa_ece408_mxnet_docker:amd64-cpu-latest
+    # image: cwpearson/2017fa_ece408_mxnet_docker:amd64-cpu-latest
+  image: cwpearson/2017fa_ece408_mxnet_docker:amd64-gpu-latest
 resources:
   cpu:
     architecture: amd64
   gpu:
     architecture: pascal
-    count: 0
+    # count: 0
+    count: 1
   network: false
 commands:
   build:
@@ -14,4 +16,6 @@ commands:
     - /bin/bash -c "for src in ece408_src/*; do cp -v $src /mxnet/src/operator/custom/.; done" # copy source files to mxnet tree
     - nice -n20 make -C /mxnet # build mxnet
     - pip install --user -e /mxnet/python   # install python bindings
-    - python m1.1.py # execute code
+    # - /usr/bin/time -p python m1.1.py
+    # - /usr/bin/time -p python m1.2.py # execute code
+    - nvprof python m1.2.py
