@@ -5,6 +5,7 @@
 #define IMG_NUM 64
 #define FEATURE_NUM 64
 #define IMG_SIDE_LENGTH 24
+#define IMG_AREA (IMG_SIDE_LENGTH * IMG_SIDE_LENGTH)
 
 #include <mxnet/base.h>
 
@@ -24,8 +25,8 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
 
     const int H_out = H - K + 1;
     const int W_out = W - K + 1;
-    (void)H_out; // silence declared but never referenced warning. remove this line when you start working
-    (void)W_out; // silence declared but never referenced warning. remove this line when you start working
+    //(void)H_out; // silence declared but never referenced warning. remove this line when you start working
+    //(void)W_out; // silence declared but never referenced warning. remove this line when you start working
 
     // An example use of these macros:
     // float a = y4d(0,0,0,0)
@@ -37,13 +38,33 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
     /*
         Your code here!
     */
+	 int img = blockIdx.x * IMG_NUM + threadIdx.x;				// b
+	 int feature = blockIdx.y * FEATURE_NUM + threadIdx.y;	// m
+	 int pos = blockIdx.z * IMG_AREA + threadIdx.z;				// Linear pos in array
+	 int height = pos / W;												// h
+	 int width = pos % W;												// w
+
+	 float sum = 0.0f;
+	 // Sum over all feature maps
+	 for(int c = 0; c < C; ++c) {
+		 // Single convolution step: KxK filter
+		 for(int p = 0; p < K; ++p) {
+			 for (int q = 0; q < K; ++q) {
+				  sum += x4d(img, c, height + p, width + q) * k4d(feature, c, p, q);
+				  //x[img][c][height + p][width + q] * k[feature][c][p][q];
+			 }
+		 }
+	 }
+	 y(img, feature, height, width) = sum;
+	 //y[img][feature][height][width] = sum;
+
 
     #undef y4d
     #undef x4d
     #undef k4d
 }
 
-/* 
+/*
    This function is called by new-inl.h
    Any code you write should be executed by this function.
    For ECE408, we only expect the float version of the operator to be called, so here we specialize with only floats.
@@ -86,7 +107,7 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
 }
 
 
-/* 
+/*
     This tells mxnet how to do an op when it's not a float.
     This is not used in the ECE408 project
 */
