@@ -55,7 +55,7 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
 			 }
 		 }
 	 }
-	 y(img, feature, height, width) = sum;
+	 y4d(img, feature, height, width) = sum;
 	 //y[img][feature][height][width] = sum;
 
 
@@ -89,9 +89,9 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
 
     // Set the kernel dimensions
     dim3 gridDim = {
-        ceil((float)B / IMG_NUM),
-        ceil((float)M / FEATURE_NUM),
-        ceil((float)(H * W) / IMG_SIDE_LENGTH / IMG_SIDE_LENGTH)
+        (unsigned int) ceil((float)B / IMG_NUM),
+        (unsigned int) ceil((float)M / FEATURE_NUM),
+        (unsigned int) ceil((float)(H * W) / IMG_SIDE_LENGTH / IMG_SIDE_LENGTH)
     };
     dim3 blockDim = {
         IMG_NUM,
