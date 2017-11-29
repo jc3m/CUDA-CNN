@@ -2,15 +2,16 @@
 #ifndef MXNET_OPERATOR_NEW_FORWARD_CUH_
 #define MXNET_OPERATOR_NEW_FORWARD_CUH_
 
+#define IMG_NUM 64
+#define FEATURE_NUM 64
+#define IMG_SIDE_LENGTH 24
+
 #include <mxnet/base.h>
 
 namespace mxnet
 {
 namespace op
 {
-
-
-
 
 __global__ void forward_kernel(float *y, const float *x, const float *k, const int B, const int M, const int C, const int H, const int W, const int K) {
 
@@ -42,9 +43,6 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
     #undef k4d
 }
 
-
-
-
 /* 
    This function is called by new-inl.h
    Any code you write should be executed by this function.
@@ -52,28 +50,39 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
 */
 template<>
 void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tensor<gpu, 4, float> &x, const mshadow::Tensor<gpu, 4, float> &w) {
-    
 
     // Use mxnet's CHECK_EQ to do assertions.
     // Remove this assertion when you do your implementation!
-    CHECK_EQ(0, 1) << "Missing an ECE408 GPU implementation!";
+    // CHECK_EQ(0, 1) << "Missing an ECE408 GPU implementation!";
 
     // You'll probably need to launch kernels against the right stream to keep MXNet happy
-    // cudaStream_t s = y.stream_->stream_;
+    cudaStream_t s = y.stream_->stream_;
 
     // Extract the tensor dimensions into B,M,C,H,W,K
-    // ...
+    const int B = x.shape_[0]; // Number of Images, y.shape_[0] should be the same
+    const int M = y.shape_[1]; // Number of the output feature maps
+    const int C = x.shape_[1]; // Number of input feature maps
+    const int H = x.shape_[2]; // Height of an input feature map
+    const int W = x.shape_[3]; // Width of an input feature map
+    const int K = w.shape_[3]; // Side length of a filter
 
     // Set the kernel dimensions
-    // dim3 gridDim(0);
-    // dim3 blockDim(0);
+    dim3 gridDim = {
+        ceil((float)B / IMG_NUM),
+        ceil((float)M / FEATURE_NUM),
+        ceil((float)(H * W) / IMG_SIDE_LENGTH / IMG_SIDE_LENGTH)
+    };
+    dim3 blockDim = {
+        IMG_NUM,
+        FEATURE_NUM,
+        IMG_SIDE_LENGTH * IMG_SIDE_LENGTH
+    };
 
     // Call the kernel
-    // forward_kernel<<<gridDim, blockDim, 0, s>>>(y.dptr_,x.dptr_,w.dptr_, B,M,C,H,W,K);
+    forward_kernel<<<gridDim, blockDim, 0, s>>>(y.dptr_,x.dptr_,w.dptr_, B,M,C,H,W,K);
 
     // Use MSHADOW_CUDA_CALL to check for CUDA runtime errors.
     MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
-
 }
 
 
