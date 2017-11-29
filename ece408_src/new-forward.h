@@ -16,9 +16,9 @@ void forward(mshadow::Tensor<cpu, 4, DType> &y, const mshadow::Tensor<cpu, 4, DT
     // We have added an additional dimension to the tensors to support an entire mini-batch
     // The goal here is to be correct, not fast (this is the CPU implementation.)
 
-    const int B = x.shape_[0];
-    const int M = y.shape_[1];
-    const int C = x.shape_[1];
+    const int B = x.shape_[0]; // Number of Images, y.shape_[0] should be the same
+    const int M = y.shape_[1]; // Number of the output feature maps
+    const int C = x.shape_[1]; // Number of input feature maps
     const int H = x.shape_[2];
     const int W = x.shape_[3];
     const int K = k.shape_[3];
