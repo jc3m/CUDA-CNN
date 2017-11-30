@@ -36,22 +36,25 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
     /*
         Your code here!
     */
-    int img = blockIdx.x;												// b
-    int feature = blockIdx.y;											// m
-    int height = blockIdx.z / W + threadIdx.y;					// h
-    int width = blockIdx.z % W + threadIdx.x;					// w
+    int img = blockIdx.x;										// b
+    int feature = blockIdx.y;									// m
+    unsigned int W_grid = (unsigned int)ceil((float)W_out / IMG_SIDE_LENGTH);
+    int height = blockIdx.z / W_grid + threadIdx.y;					// h
+    int width = blockIdx.z % W_grid + threadIdx.x;					// w
 
-    float sum = 0.0f;
-    // Sum over all feature maps
-    for(int c = 0; c < C; ++c) {
-        // Single convolution step: KxK filter
-        for(int p = 0; p < K; ++p) {
-            for (int q = 0; q < K; ++q) {
-                sum += x4d(img, c, height + p, width + q) * k4d(feature, c, p, q);
+    if (height < H && width < W) {
+        float sum = 0.0f;
+        // Sum over all feature maps
+        for (int c = 0; c < C; ++c) {
+            // Single convolution step: KxK filter
+            for (int p = 0; p < K; ++p) {
+                for (int q = 0; q < K; ++q) {
+                    sum += x4d(img, c, height + p, width + q) * k4d(feature, c, p, q);
+                }
             }
         }
+        y4d(img, feature, height, width) = sum;
     }
-    y4d(img, feature, height, width) = sum;
 
     #undef y4d
     #undef x4d
@@ -82,10 +85,16 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     const int K = w.shape_[3]; // Side length of a filter
 
     // Set the kernel dimensions
-    unsigned int W_grid = (unsigned int)ceil((float)W / IMG_SIDE_LENGTH);
-    unsigned int H_grid = (unsigned int)ceil((float)H / IMG_SIDE_LENGTH);
+    const int H_out = H - K + 1;
+    const int W_out = W - K + 1;
+    unsigned int W_grid = (unsigned int)ceil((float)W_out / IMG_SIDE_LENGTH);
+    unsigned int H_grid = (unsigned int)ceil((float)H_out / IMG_SIDE_LENGTH);
     unsigned int Z = W_grid * H_grid;
-    dim3 gridDim = { B, M, Z };
+    dim3 gridDim = {
+        (unsigned int)B,
+        (unsigned int)M,
+        (unsigned int)Z
+    };
     dim3 blockDim = { IMG_SIDE_LENGTH, IMG_SIDE_LENGTH, 1 };
 
     // Call the kernel
