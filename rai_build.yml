@@ -1,12 +1,12 @@
 rai:
   version: 0.2
-  image: cwpearson/2017fa_ece408_mxnet_docker:amd64-cpu-latest # Specifies environment code will run in, contains prebuilt mxnet libs
+  image: cwpearson/2017fa_ece408_mxnet_docker:amd64-gpu-latest # Specifies environment code will run in, contains prebuilt mxnet libs
 resources:
   cpu:
     architecture: amd64
   gpu:
     architecture: pascal
-    count: 0
+    count: 1
   network: false
 commands: # Recipes executed by rai
   build:
@@ -15,4 +15,4 @@ commands: # Recipes executed by rai
     - nice -n20 make -C /mxnet # build mxnet
     - pip install --user -e /mxnet/python # install python bindings
     # - python m2.1.py ece408-low 10000 # execute code
-    - python m2.1.py ece408-high 10000 # execute code
+    - python m3.1.py ece408-high 10000 # execute code

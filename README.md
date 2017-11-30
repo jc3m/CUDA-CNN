@@ -92,11 +92,11 @@ Clone this repository to get the project directory.
 
 Download the rai binary for your platform. You will probably use it for development, and definitely use it for submission.
 
-| Operating System | Architecture | Stable Version (0.2.18) Link                                                             |
+| Operating System | Architecture | Stable Version (0.2.20) Link                                                             |
 | ---------------- | ------------ | ------------------------------------------------------------------------------- |
-| Linux            | amd64        | [URL](https://github.com/rai-project/rai/releases/download/v0.2.18/linux-amd64.tar.gz)   |
-| OSX/Darwin       | amd64        | [URL](https://github.com/rai-project/rai/releases/download/v0.2.18/darwin-amd64.tar.gz)  |
-| Windows          | amd64        | [URL](https://github.com/rai-project/rai/releases/download/v0.2.18/windows-amd64.tar.gz) |
+| Linux            | amd64        | [URL](https://github.com/rai-project/rai/releases/download/v0.2.20/linux-amd64.tar.gz)   |
+| OSX/Darwin       | amd64        | [URL](https://github.com/rai-project/rai/releases/download/v0.2.20/darwin-amd64.tar.gz)  |
+| Windows          | amd64        | [URL](https://github.com/rai-project/rai/releases/download/v0.2.20/windows-amd64.tar.gz) |
 
 You should have received a `.rai_profile` file by email.
 Put that file in `~/.rai_profile` (Linux/macOS) or `%HOME%/.rai_profile` (Windows).
@@ -327,6 +327,8 @@ You should see something like this:
 
 In this example, the forward layer took 14.8954 seconds, and the forward_kernel took 14.8952 seconds.
 
+You can create a single profile for ece408-high with 10000 images.
+
 **Deliverables**
 Again, use `rai -p <project folder> --submit=m3` to submit your code.
 
@@ -358,6 +360,11 @@ You may use nvprof to collect more detailed information through timeline and ana
 you can collect the generated files by following the download link reported by rai at the end of the execution.
 `--analysis-metrics` significantly slows the run time, you may wish to modify the python scripts to run on smaller datasets during this profiling.
 
+The ranking is determined by the minimum run time of kernels with correct inferences which are run with the `--submit` flag.
+The `rai ranking` command is not the final word: the staff will re-run all final submissions 3 times and choose the fastest result as your time.
+THe ranking is determined solely by the same value printed by `Op Time:` during your run.
+That `Op Time` is computed by wrapping the mxnet op that you implement in a timer.
+
 **Deliverables**
 
 ### Final Report
@@ -373,13 +380,16 @@ The report does not need to be a particular length, but should be long enough to
     3. M2.1: your baseline cpu implementation correctness and performance results (time).
     The `Op Time:` printed by the program will show the time just for the convolution layer.
     The implementation should have the expected correctness.
+    Include how you divided work amongst your team (even though there is not much work).
     4. M3.1: your baseline gpu implementation performance results (time, `nvprof` profile).
     The implementation should have the expected correctness.
+    Include how you divided work amongst your team (even though there is not much work).
 2. **Optimization Approach and Results**
     * how you identified the optimization opportunity
     * why you thought the approach would be fruitful
     * the effect of the optimization. was it fruitful, and why or why not. Use nvprof as needed to justify your explanation.
     * Any external references used during identification or development of the optimization
+    * How  your team organized and divided up this work.
 3. **References** (as needed)
 4. **(Optional) Suggestions for Improving Next Year**
 
@@ -397,7 +407,8 @@ The report does not need to be a particular length, but should be long enough to
 
 `new-forward.h` and `new-forward.cuh` contain skeleton implementations for CPU and GPU convolutions. You can complete the project by modifying only these two files. These functions are called from `Forward()` in `new-inl.h`.
 
-The code in `new-inl.h`, `new.cc`, and `new.cu` describes the convolution layer to MXNet. You will not need to modify these files, though you can if you want to.
+The code in `new-inl.h`, `new.cc`, and `new.cu` describes the convolution layer to MXNet. You should not modify these files. They are provided for your curiosity.
+As of rai 0.2.20, When you use the `--submit` flag, a golden version of these files from [here](https://github.com/cwpearson/2017fa_ece408_mxnet_docker/tree/master/ece408-src) is used.
 
 | File | Function | Description |
 | -- | -- | -- |
