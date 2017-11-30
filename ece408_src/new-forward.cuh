@@ -13,7 +13,14 @@ namespace mxnet
 {
 namespace op
 {
-
+/*
+	  ____.    ____.  .__                    ___.   .__  __         .__
+    |    |   |    |  |__| ______  _____     \_ |__ |__|/  |_  ____ |  |__
+    |    |   |    |  |  |/  ___/  \__  \     | __ \|  \   __\/ ___\|  |  \
+/\__|    /\__|    |  |  |\___ \    / __ \_   | \_\ \  ||  | \  \___|   Y  \
+\________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
+									\/        \/        \/              \/     \/
+*/
 __global__ void forward_kernel(float *y, const float *x, const float *k, const int B, const int M, const int C, const int H, const int W, const int K) {
 
     /*
@@ -85,7 +92,11 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     unsigned int W_grid = (unsigned int)ceil((float)W / IMG_SIDE_LENGTH);
     unsigned int H_grid = (unsigned int)ceil((float)H / IMG_SIDE_LENGTH);
     unsigned int Z = W_grid * H_grid;
-    dim3 gridDim = { B, M, Z };
+    dim3 gridDim = {
+		 (unsigned int) B,
+		 (unsigned int) M,
+		 (unsigned int) Z
+	 };
     dim3 blockDim = { IMG_SIDE_LENGTH, IMG_SIDE_LENGTH, 1 };
 
     // Call the kernel
