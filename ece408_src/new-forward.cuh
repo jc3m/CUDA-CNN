@@ -36,23 +36,22 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
     /*
         Your code here!
     */
-     int img = blockIdx.x * IMG_NUM + threadIdx.x;              // b
-     int feature = blockIdx.y * FEATURE_NUM + threadIdx.y;	    // m
-     int pos = blockIdx.z * IMG_AREA + threadIdx.z;	            // Linear pos in array
-     int height = pos / W;                                      // h
-     int width = pos % W;                                       // w
+    int img = blockIdx.x;												// b
+    int feature = blockIdx.y;											// m
+    int height = blockIdx.z / W + threadIdx.y;					// h
+    int width = blockIdx.z % W + threadIdx.x;					// w
 
-     float sum = 0.0f;
-     // Sum over all feature maps
-     for(int c = 0; c < C; ++c) {
-         // Single convolution step: KxK filter
-         for(int p = 0; p < K; ++p) {
+    float sum = 0.0f;
+    // Sum over all feature maps
+    for(int c = 0; c < C; ++c) {
+        // Single convolution step: KxK filter
+        for(int p = 0; p < K; ++p) {
             for (int q = 0; q < K; ++q) {
                 sum += x4d(img, c, height + p, width + q) * k4d(feature, c, p, q);
             }
         }
     }
-     y4d(img, feature, height, width) = sum;
+    y4d(img, feature, height, width) = sum;
 
     #undef y4d
     #undef x4d
