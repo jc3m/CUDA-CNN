@@ -25,8 +25,6 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
 
     const int H_out = H - K + 1;
     const int W_out = W - K + 1;
-    //(void)H_out; // silence declared but never referenced warning. remove this line when you start working
-    //(void)W_out; // silence declared but never referenced warning. remove this line when you start working
 
     // An example use of these macros:
     // float a = y4d(0,0,0,0)
@@ -38,26 +36,23 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
     /*
         Your code here!
     */
-	 int img = blockIdx.x * IMG_NUM + threadIdx.x;				// b
-	 int feature = blockIdx.y * FEATURE_NUM + threadIdx.y;	// m
-	 int pos = blockIdx.z * IMG_AREA + threadIdx.z;				// Linear pos in array
-	 int height = pos / W;												// h
-	 int width = pos % W;												// w
+     int img = blockIdx.x * IMG_NUM + threadIdx.x;              // b
+     int feature = blockIdx.y * FEATURE_NUM + threadIdx.y;	    // m
+     int pos = blockIdx.z * IMG_AREA + threadIdx.z;	            // Linear pos in array
+     int height = pos / W;                                      // h
+     int width = pos % W;                                       // w
 
-	 float sum = 0.0f;
-	 // Sum over all feature maps
-	 for(int c = 0; c < C; ++c) {
-		 // Single convolution step: KxK filter
-		 for(int p = 0; p < K; ++p) {
-			 for (int q = 0; q < K; ++q) {
-				  sum += x4d(img, c, height + p, width + q) * k4d(feature, c, p, q);
-				  //x[img][c][height + p][width + q] * k[feature][c][p][q];
-			 }
-		 }
-	 }
-	 y4d(img, feature, height, width) = sum;
-	 //y[img][feature][height][width] = sum;
-
+     float sum = 0.0f;
+     // Sum over all feature maps
+     for(int c = 0; c < C; ++c) {
+         // Single convolution step: KxK filter
+         for(int p = 0; p < K; ++p) {
+            for (int q = 0; q < K; ++q) {
+                sum += x4d(img, c, height + p, width + q) * k4d(feature, c, p, q);
+            }
+        }
+    }
+     y4d(img, feature, height, width) = sum;
 
     #undef y4d
     #undef x4d
@@ -88,16 +83,11 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     const int K = w.shape_[3]; // Side length of a filter
 
     // Set the kernel dimensions
-    dim3 gridDim = {
-        (unsigned int) ceil((float)B / IMG_NUM),
-        (unsigned int) ceil((float)M / FEATURE_NUM),
-        (unsigned int) ceil((float)(H * W) / IMG_SIDE_LENGTH / IMG_SIDE_LENGTH)
-    };
-    dim3 blockDim = {
-        IMG_NUM,
-        FEATURE_NUM,
-        IMG_SIDE_LENGTH * IMG_SIDE_LENGTH
-    };
+    unsigned int W_grid = (unsigned int)ceil((float)W / IMG_SIDE_LENGTH);
+    unsigned int H_grid = (unsigned int)ceil((float)H / IMG_SIDE_LENGTH);
+    unsigned int Z = W_grid * H_grid;
+    dim3 gridDim = { B, M, Z };
+    dim3 blockDim = { IMG_SIDE_LENGTH, IMG_SIDE_LENGTH, 1 };
 
     // Call the kernel
     forward_kernel<<<gridDim, blockDim, 0, s>>>(y.dptr_,x.dptr_,w.dptr_, B,M,C,H,W,K);
