@@ -13,7 +13,14 @@ namespace mxnet
 {
 namespace op
 {
-
+/*
+	  ____.    ____.  .__                    ___.   .__  __         .__
+    |    |   |    |  |__| ______  _____     \_ |__ |__|/  |_  ____ |  |__
+    |    |   |    |  |  |/  ___/  \__  \     | __ \|  \   __\/ ___\|  |  \
+/\__|    /\__|    |  |  |\___ \    / __ \_   | \_\ \  ||  | \  \___|   Y  \
+\________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
+									\/        \/        \/              \/     \/
+*/
 __global__ void forward_kernel(float *y, const float *x, const float *k, const int B, const int M, const int C, const int H, const int W, const int K) {
 
     /*
