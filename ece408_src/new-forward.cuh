@@ -19,6 +19,11 @@
 #define W 28
 #define K 5
 
+#define H_out (H - K + 1)
+#define W_out (H - K + 1)
+#define W_unroll (C * K * K)
+#define H_unroll (H_out * W_out)
+
 __constant__ float k_const[][][][];
 
 #define y4d(i3,i2,i1,i0) y[(i3) * (M * H_out * W_out) + (i2)*(H_out * W_out) + (i1)*(W_out) + i0]
@@ -55,7 +60,7 @@ __device__ void unroll_kernel(const int C, const int H, const int W, const int K
 
         for(int p = 0; p < K; p++) {
             int w_unroll = w_base + p * K + q;
-            X_unroll[h_unroll, w_unroll] = X[c, h_out + p, w_out + q];
+            X_unroll[img, h_unroll, w_unroll] = x4d(img, c, h_out + p, w_out + q);//X[c, h_out + p, w_out + q];
         }
     }
 }
