@@ -31,6 +31,7 @@ __constant__ float k_const[][][][];
 #define k4d(i3,i2,i1,i0) k[(i3) * (C * K * K) + (i2)*(K * K) + (i1)*(K) + i0]
 
 #include <mxnet/base.h>
+#include "matrix_mul.cuh"
 
 namespace mxnet
 {
@@ -59,8 +60,10 @@ __device__ void unroll_kernel(const int C, const int H, const int W, const int K
         int W_base = c * K * K;
 
         for(int p = 0; p < K; p++) {
-            int w_unroll = w_base + p * K + q;
-            X_unroll[img, h_unroll, w_unroll] = x4d(img, c, h_out + p, w_out + q);//X[c, h_out + p, w_out + q];
+			  for(int q = 0; q < K; q++) {
+				  int w_unroll = w_base + p * K + q;
+				  X_unroll[img, h_unroll, w_unroll] = x4d(img, c, h_out + p, w_out + q);//X[c, h_out + p, w_out + q];
+			  }
         }
     }
 }
@@ -73,9 +76,6 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
     The goal here is to be correct AND fast.
     We have some nice #defs for you below to simplify indexing. Feel free to use them, or create your own.
     */
-
-    const int H_out = H - K + 1;
-    const int W_out = W - K + 1;
 
 
 }
