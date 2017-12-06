@@ -102,17 +102,19 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     const int K = w.shape_[3]; // Side length of a filter
 
     // Set the kernel dimensions
+    // H_out and W_out should both be 24
     const int H_out = H - K + 1;
     const int W_out = W - K + 1;
-    unsigned int W_grid = int_ceil(W_out,IMG_SIDE_LENGTH);
-    unsigned int H_grid = int_ceil(H_out,IMG_SIDE_LENGTH);
-    unsigned int Z = W_grid * H_grid;
     dim3 gridDim = {
         (unsigned int)B,
         (unsigned int)M,
-        (unsigned int)Z
+        1
     };
-    dim3 blockDim = { IMG_SIDE_LENGTH, IMG_SIDE_LENGTH, 1 };
+    dim3 blockDim = {
+        (unsigned int)W_out,
+        (unsigned int)H_out,
+        1
+    };
 
     // Call the kernel
     forward_kernel<<<gridDim, blockDim, 0, s>>>(y.dptr_,x.dptr_,w.dptr_, B,M,C,H,W,K);
