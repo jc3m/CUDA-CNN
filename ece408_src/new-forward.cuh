@@ -32,32 +32,32 @@ namespace mxnet
 namespace op
 {
 /*
-	  ____.    ____.  .__                    ___.   .__  __         .__
+     ____.    ____.  .__                    ___.   .__  __         .__
     |    |   |    |  |__| ______  _____     \_ |__ |__|/  |_  ____ |  |__
     |    |   |    |  |  |/  ___/  \__  \     | __ \|  \   __\/ ___\|  |  \
 /\__|    /\__|    |  |  |\___ \    / __ \_   | \_\ \  ||  | \  \___|   Y  \
 \________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
-									\/        \/        \/              \/     \/
+                             \/        \/        \/              \/     \/
 */
 __device__ void unroll_kernel(const int C, const int H, const int W, const int K, float *X, float *X_unroll, const int H_out, const int W_out) {
-	int t = blockIdx.x * CUDA_MAX_NUM_THREADS + threadIdx.x;
-	int W_unroll = H_out * W_out;
+    int t = blockIdx.x * CUDA_MAX_NUM_THREADS + threadIdx.x;
+    int W_unroll = H_out * W_out;
 
-	if(t < C * W_unroll) {
-		//It'd be cool to speed these up with some inline
-		int c = t / W_unroll;
-		int s = t % W_unroll;
-		int h_out = s / W_out;
-		int w_out = s % W_out;
+    if(t < C * W_unroll) {
+        //It'd be cool to speed these up with some inline
+        int c = t / W_unroll;
+        int s = t % W_unroll;
+        int h_out = s / W_out;
+        int w_out = s % W_out;
 
-		int H_unroll = h_out * W_out + w_out;
-		int W_base = c * K * K;
+        int H_unroll = h_out * W_out + w_out;
+        int W_base = c * K * K;
 
-		for(int p = 0; p < K; p++) {
-			int w_unroll = w_base + p * K + q;
-			X_unroll[h_unroll, w_unroll] = X[c, h_out + p, w_out + q];
-		}
-	}
+        for(int p = 0; p < K; p++) {
+            int w_unroll = w_base + p * K + q;
+            X_unroll[h_unroll, w_unroll] = X[c, h_out + p, w_out + q];
+        }
+    }
 }
 
 __global__ void forward_kernel(float *y, const float *x, const float *k, const int B, const int M, const int C, const int H, const int W, const int K, const int H_out, const int W_out) {
@@ -76,10 +76,10 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
 }
 
 static void unroll(const int C, const int H, const int W, const int K, float *X, float *X_unroll, const int H_out, const int W_out) {
-	unsigned int num_threads = C * H_out * W_out;
-	unsigned int num_blocks = int_ceil(num_threads, CUDA_MAX_NUM_THREADS);
+    unsigned int num_threads = C * H_out * W_out;
+    unsigned int num_blocks = int_ceil(num_threads, CUDA_MAX_NUM_THREADS);
 
-	unroll_kernel<<<num_blocks, CUDA_MAX_NUM_THREADS>>>(C, H, W, K, X, X_unroll);
+    unroll_kernel<<<num_blocks, CUDA_MAX_NUM_THREADS>>>(C, H, W, K, X, X_unroll);
 }
 
 /*
@@ -89,10 +89,6 @@ static void unroll(const int C, const int H, const int W, const int K, float *X,
 */
 template<>
 void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tensor<gpu, 4, float> &x, const mshadow::Tensor<gpu, 4, float> &w) {
-
-    // Use mxnet's CHECK_EQ to do assertions.
-    // Remove this assertion when you do your implementation!
-    // CHECK_EQ(0, 1) << "Missing an ECE408 GPU implementation!";
 
     // You'll probably need to launch kernels against the right stream to keep MXNet happy
     cudaStream_t s = y.stream_->stream_;
