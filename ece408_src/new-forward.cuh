@@ -65,7 +65,17 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *Carr) {
         }
 
         if ((m * TILE_WIDTH + threadIdx.y < numBRows) && (Col < numCColumns)) {
-            subTileB[threadIdx.y][threadIdx.x] = B[(m*TILE_WIDTH + threadIdx.y)*numBColumns + Col];
+            // subTileB[threadIdx.y][threadIdx.x] = B[m*TILE_WIDTH + threadIdx.y][]
+            int w_unroll = m * TILE_WIDTH + threadIdx.y;
+            int h_unroll = Col;
+            int w_out = h_unroll % W_out;
+            int h_out = h_unroll / W_out;
+            int q = w_unroll % K;
+            int p = (w_unroll / K) % K;
+            int c = w_unroll / (K * K);
+            // subTileB[threadIdx.y][threadIdx.x] = B[(m*TILE_WIDTH + threadIdx.y)*numBColumns + Col];
+            float *x = B;
+            subTileB[threadIdx.y][threadIdx.x] = x4d(0, c, h_out + p, w_out + q);
         } else {
             subTileB[threadIdx.y][threadIdx.x] = 0;
         }
@@ -90,44 +100,6 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *Carr) {
     #undef numCColumns
 }
 
-__global__ void unroll_kernel(float *x, float *X_unroll) {
-    // The following kernel copies a KxK section of X that will be used to compute
-    // exactly one output element in the convolution
-    int t = blockIdx.x * CUDA_MAX_NUM_THREADS + threadIdx.x;
-
-    int W_unroll = H_out * W_out;           // Number of elements in an output feature map
-
-    if (t < W_unroll) {
-        // It'd be cool to speed these up with some inline
-        int c = t / W_unroll;                   // The given feature map
-        int s = t % W_unroll;                   // Linearized index in the output feature map
-        int h_out = s / W_out;                  // Height in the output feature map
-        int w_out = s % W_out;                  // Width in the output feature map
-
-        int h_unroll = h_out * W_out + w_out;
-        int w_base = c * K * K;
-
-        for (int p = 0; p < K; p++) {
-            for (int q = 0; q < K; q++) {
-                int w_unroll = w_base + p * K + q;
-
-                // X_unroll[b, w_unroll, h_unroll] = X[b, c, h_out + p, w_out + q];
-                #define X_unroll3d(i2,i1,i0) X_unroll[(i2)*(H_out * W_out * C * K * K) + (i1)*(H_out * W_out) + i0]
-                #define X_unroll2d(i1,i0) X_unroll[i1*(H_out * W_out) + i0]
-                // X_unroll3d(b, w_unroll, h_unroll) = x4d(b, c, h_out + p, w_out + q);
-                X_unroll2d(w_unroll, h_unroll) = x4d(0, c, h_out + p, w_out + q);
-            }
-        }
-    }
-}
-
-static void unroll(float *X, float *X_unroll, cudaStream_t s) {
-    unsigned int num_threads = C * H_out * W_out;
-    unsigned int num_blocks = int_ceil(num_threads, CUDA_MAX_NUM_THREADS);
-
-    unroll_kernel<<<num_blocks, CUDA_MAX_NUM_THREADS, 0, s>>>(X, X_unroll);
-}
-
 /*
    This function is called by new-inl.h
    Any code you write should be executed by this function.
@@ -142,15 +114,8 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     // Extract the tensor dimensions into B,M,C,H,W,K
     const int B = x.shape_[0]; // Number of Images, y.shape_[0] should be the same
 
-    // Unroll
-    float *X_unroll;
-    cudaMalloc(&X_unroll, sizeof(float) * C * K * K * H_out * W_out);
-
     for (int b = 0; b < B; b++) {
         float *xb = &(x.dptr_[b * C * H * W]);
-        unroll(xb, X_unroll, s);
-        cudaDeviceSynchronize();
-
         float *yb = &(y.dptr_[b * M * H_out * W_out]);
 
         // int k_rows = M;
@@ -166,11 +131,9 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
             (unsigned int)ceil((float)y_rows / (float)TILE_WIDTH),
             1
         };
-        matrixMultiplyShared<<<gridDim, blockDim>>>(w.dptr_, X_unroll, yb);
+        matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(w.dptr_, xb, yb);
         cudaDeviceSynchronize();
     }
-
-    cudaFree(X_unroll);
 
     // Use MSHADOW_CUDA_CALL to check for CUDA runtime errors.
     MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
