@@ -165,7 +165,7 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     // forward_kernel<<<gridDim, blockDim, 0, s>>>(y.dptr_,x.dptr_,w.dptr_, B,M,C,H,W,K);
 
     for (int b = 0; b < B; b++) {
-        float *xb = &(x.dptr_[b * C * K * K * H_out * W_out]);
+        float *xb = &(x.dptr_[b * C * H * W]);
         unroll(xb, X_unroll, s);
         cudaDeviceSynchronize();
 
@@ -184,7 +184,8 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
             (unsigned int)ceil((float)y_rows / (float)TILE_WIDTH),
             1
         };
-        matrixMultiplyShared<<<gridDim, blockDim>>>(w.dptr_, xb, yb, k_rows, k_cols, x_rows, x_cols, y_rows, y_cols);
+        matrixMultiplyShared<<<gridDim, blockDim>>>(w.dptr_, X_unroll, yb, k_rows, k_cols, x_rows, x_cols, y_rows, y_cols);
+        cudaDeviceSynchronize();
     }
 
     cudaFree(X_unroll);
