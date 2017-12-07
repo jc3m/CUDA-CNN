@@ -21,17 +21,15 @@
 
 #define H_out (H - K + 1)
 #define W_out (H - K + 1)
-#define W_unroll (C * K * K)
-#define H_unroll (H_out * W_out)
-
-__constant__ float k_const[][][][];
+// #define W_unroll (C * K * K)
+// #define H_unroll (H_out * W_out)
 
 #define y4d(i3,i2,i1,i0) y[(i3) * (M * H_out * W_out) + (i2)*(H_out * W_out) + (i1)*(W_out) + i0]
 #define x4d(i3,i2,i1,i0) x[(i3) * (C * H * W) + (i2)*(H * W) + (i1)*(W) + i0]
 #define k4d(i3,i2,i1,i0) k[(i3) * (C * K * K) + (i2)*(K * K) + (i1)*(K) + i0]
 
 #include <mxnet/base.h>
-#include "matrix_mul.cuh"
+// #include "matrix_mul.cuh"
 
 namespace mxnet
 {
@@ -45,8 +43,7 @@ namespace op
 \________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
                              \/        \/        \/              \/     \/
 */
-__device__ void unroll_kernel(const int B, const int C, const int H, const int W, const int K,
-                              float *X, float *X_unroll, const int H_out, const int W_out) {
+__global__ void unroll_kernel(const int B, float *x, float *X_unroll) {
     // The following kernel copies a KxK section of X that will be used to compute
     // exactly one output element in the convolution
     int t = blockIdx.x * CUDA_MAX_NUM_THREADS + threadIdx.x;
@@ -64,8 +61,8 @@ __device__ void unroll_kernel(const int B, const int C, const int H, const int W
         int h_out = s / W_out;                  // Height in the output feature map
         int w_out = s % W_out;                  // Width in the output feature map
 
-        int H_unroll = h_out * W_out + w_out;
-        int W_base = c * K * K;
+        int h_unroll = h_out * W_out + w_out;
+        int w_base = c * K * K;
 
         for (int p = 0; p < K; p++) {
             for (int q = 0; q < K; q++) {
@@ -79,9 +76,7 @@ __device__ void unroll_kernel(const int B, const int C, const int H, const int W
     }
 }
 
-__global__ void forward_kernel(float *y, const float *x, const float *k, const int B,
-                               const int M, const int C, const int H, const int W,
-                               const int K, const int H_out, const int W_out) {
+__global__ void forward_kernel(float *y, const float *x, const float *k, const int B) {
 
     /*
     Modify this function to implement the forward pass described in Chapter 16.
@@ -93,12 +88,11 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
 
 }
 
-static void unroll(const int B, const int C, const int H, const int W, const int K, float *X,
-                   float *X_unroll, const int H_out, const int W_out) {
+static void unroll(const int B, float *X, float *X_unroll, cudaStream_t s) {
     unsigned int num_threads = B * C * H_out * W_out;
     unsigned int num_blocks = int_ceil(num_threads, CUDA_MAX_NUM_THREADS);
 
-    unroll_kernel<<<num_blocks, CUDA_MAX_NUM_THREADS>>>(B, C, H, W, K, X, X_unroll);
+    unroll_kernel<<<num_blocks, CUDA_MAX_NUM_THREADS, 0, s>>>(B, X, X_unroll);
 }
 
 /*
@@ -107,37 +101,39 @@ static void unroll(const int B, const int C, const int H, const int W, const int
    For ECE408, we only expect the float version of the operator to be called, so here we specialize with only floats.
 */
 template<>
-void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tensor<gpu, 4, float> &x,
-                         const mshadow::Tensor<gpu, 4, float> &w) {
+void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tensor<gpu, 4, float> &x, const mshadow::Tensor<gpu, 4, float> &w) {
 
     // You'll probably need to launch kernels against the right stream to keep MXNet happy
     cudaStream_t s = y.stream_->stream_;
 
     // Extract the tensor dimensions into B,M,C,H,W,K
     const int B = x.shape_[0]; // Number of Images, y.shape_[0] should be the same
-    const int M = y.shape_[1]; // Number of the output feature maps
-    const int C = x.shape_[1]; // Number of input feature maps
-    const int H = x.shape_[2]; // Height of an input feature map
-    const int W = x.shape_[3]; // Width of an input feature map
-    const int K = w.shape_[3]; // Side length of a filter
+    // const int M = y.shape_[1]; // Number of the output feature maps
+    // const int C = x.shape_[1]; // Number of input feature maps
+    // const int H = x.shape_[2]; // Height of an input feature map
+    // const int W = x.shape_[3]; // Width of an input feature map
+    // const int K = w.shape_[3]; // Side length of a filter
 
     // Set the kernel dimensions
     // H_out and W_out should both be 24
-    const int H_out = H - K + 1;
-    const int W_out = W - K + 1;
-    dim3 gridDim = {
-        (unsigned int)B,
-        (unsigned int)M,
-        1
-    };
-    dim3 blockDim = {
-        (unsigned int)W_out,
-        (unsigned int)H_out,
-        1
-    };
+    // dim3 gridDim = {
+    //     (unsigned int)B,
+    //     (unsigned int)M,
+    //     1
+    // };
+    // dim3 blockDim = {
+    //     (unsigned int)W_out,
+    //     (unsigned int)H_out,
+    //     1
+    // };
+
+    // Unroll
+    float *X_unroll;
+    cudaMalloc(&X_unroll, sizeof(float) * B * C * K * K * H_out * W_out);
+    unroll(B, x.dptr_, X_unroll, s);
 
     // Call the kernel
-    forward_kernel<<<gridDim, blockDim, 0, s>>>(y.dptr_,x.dptr_,w.dptr_, B,M,C,H,W,K);
+    // forward_kernel<<<gridDim, blockDim, 0, s>>>(y.dptr_,x.dptr_,w.dptr_, B,M,C,H,W,K);
 
     // Use MSHADOW_CUDA_CALL to check for CUDA runtime errors.
     MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
