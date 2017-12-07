@@ -24,33 +24,24 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *C,
   int Col = blockIdx.x * TILE_WIDTH + threadIdx.x;
   float Pvalue = 0;
 
-  for(int m = 0; m < ceil(numAColumns/(float)TILE_WIDTH); m++)
-  {
+  for (int m = 0; m < ceil(numAColumns/(float)TILE_WIDTH); m++) {
     // Parallel memory reads
-    if((Row < numCRows) && (m * TILE_WIDTH + threadIdx.x < numAColumns))
-    {
+    if((Row < numCRows) && (m * TILE_WIDTH + threadIdx.x < numAColumns)) {
       subTileA[threadIdx.y][threadIdx.x] = A[Row*numAColumns + m*TILE_WIDTH + threadIdx.x];
-    }
-
-    else
-    {
+    } else {
       subTileA[threadIdx.y][threadIdx.x] = 0;
     }
 
-    if((m * TILE_WIDTH + threadIdx.y < numBRows) && (Col < numCColumns))
-    {
+    if((m * TILE_WIDTH + threadIdx.y < numBRows) && (Col < numCColumns)) {
       subTileB[threadIdx.y][threadIdx.x] = B[(m*TILE_WIDTH + threadIdx.y)*numBColumns + Col];
-    }
-
-    else
-    {
+    } else {
       subTileB[threadIdx.y][threadIdx.x] = 0;
     }
 
     __syncthreads();
 
     // Tile calculation
-    for(int k = 0; k < TILE_WIDTH; k++)
+    for (int k = 0; k < TILE_WIDTH; k++)
       Pvalue += subTileA[threadIdx.y][k] * subTileB[k][threadIdx.x];
 
     __syncthreads();
