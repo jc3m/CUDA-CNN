@@ -45,30 +45,43 @@ namespace op
 \________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
                              \/        \/        \/              \/     \/
 */
-__device__ void unroll_kernel(const int C, const int H, const int W, const int K, float *X, float *X_unroll, const int H_out, const int W_out) {
+__device__ void unroll_kernel(const int B, const int C, const int H, const int W, const int K,
+                              float *X, float *X_unroll, const int H_out, const int W_out) {
+    // The following kernel copies a KxK section of X that will be used to compute
+    // exactly one output element in the convolution
     int t = blockIdx.x * CUDA_MAX_NUM_THREADS + threadIdx.x;
-    int W_unroll = H_out * W_out;
 
-    if(t < C * W_unroll) {
-        //It'd be cool to speed these up with some inline
-        int c = t / W_unroll;
-        int s = t % W_unroll;
-        int h_out = s / W_out;
-        int w_out = s % W_out;
+    int W_unroll = H_out * W_out; // Number of elements in an output feature map
+    int threadsPerImage = C * W_unroll;
+    int totalThreads = B * threadsPerImage;
+
+    if (t < totalThreads) {
+        // It'd be cool to speed these up with some inline
+        int b = t / threadsPerImage;            // The image # in the batch
+        int i = t % threadsPerImage;            // InputFeatureMap/OutputElement combo in the given image
+        int c = i / W_unroll;                   // The given feature map
+        int s = i % W_unroll;                   // Linearized index in the output feature map
+        int h_out = s / W_out;                  // Height in the output feature map
+        int w_out = s % W_out;                  // Width in the output feature map
 
         int H_unroll = h_out * W_out + w_out;
         int W_base = c * K * K;
 
-        for(int p = 0; p < K; p++) {
-			  for(int q = 0; q < K; q++) {
-				  int w_unroll = w_base + p * K + q;
-				  X_unroll[img, h_unroll, w_unroll] = x4d(img, c, h_out + p, w_out + q);//X[c, h_out + p, w_out + q];
-			  }
+        for (int p = 0; p < K; p++) {
+            for (int q = 0; q < K; q++) {
+                int w_unroll = w_base + p * K + q;
+
+                // X_unroll[b, h_unroll, w_unroll] = X[b, c, h_out + p, w_out + q];
+                #define X_unroll3d(i2,i1,i0) X_unroll[(i2)*(H_out * W_out * C * K * K) + (i1)*(H_out * W_out) + i0]
+                X_unroll3d(b, h_unroll, w_unroll) = x4d(b, c, h_out + p, w_out + q);
+            }
         }
     }
 }
 
-__global__ void forward_kernel(float *y, const float *x, const float *k, const int B, const int M, const int C, const int H, const int W, const int K, const int H_out, const int W_out) {
+__global__ void forward_kernel(float *y, const float *x, const float *k, const int B,
+                               const int M, const int C, const int H, const int W,
+                               const int K, const int H_out, const int W_out) {
 
     /*
     Modify this function to implement the forward pass described in Chapter 16.
@@ -80,11 +93,12 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
 
 }
 
-static void unroll(const int C, const int H, const int W, const int K, float *X, float *X_unroll, const int H_out, const int W_out) {
-    unsigned int num_threads = C * H_out * W_out;
+static void unroll(const int B, const int C, const int H, const int W, const int K, float *X,
+                   float *X_unroll, const int H_out, const int W_out) {
+    unsigned int num_threads = B * C * H_out * W_out;
     unsigned int num_blocks = int_ceil(num_threads, CUDA_MAX_NUM_THREADS);
 
-    unroll_kernel<<<num_blocks, CUDA_MAX_NUM_THREADS>>>(C, H, W, K, X, X_unroll);
+    unroll_kernel<<<num_blocks, CUDA_MAX_NUM_THREADS>>>(B, C, H, W, K, X, X_unroll);
 }
 
 /*
@@ -93,7 +107,8 @@ static void unroll(const int C, const int H, const int W, const int K, float *X,
    For ECE408, we only expect the float version of the operator to be called, so here we specialize with only floats.
 */
 template<>
-void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tensor<gpu, 4, float> &x, const mshadow::Tensor<gpu, 4, float> &w) {
+void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tensor<gpu, 4, float> &x,
+                         const mshadow::Tensor<gpu, 4, float> &w) {
 
     // You'll probably need to launch kernels against the right stream to keep MXNet happy
     cudaStream_t s = y.stream_->stream_;
