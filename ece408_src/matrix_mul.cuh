@@ -1,19 +1,33 @@
 #ifndef MATRIX_MUL_CUH
 #define MATRIX_MUL_CUH
 
-#define TILE_WIDTH 32
+#define TILE_WIDTH 16
+
+#define numARows
+#define numAColumns
+#define numBRows
+#define numBColumns
+#define numCRows
+#define numCColumns
 
 //     ____.    ____. .__                                               .__
 //    |    |   |    | |__| ______ _____      _____ _____    ______ _____|__|__  __ ____   ______  __ __  ______ _________.__.
 //    |    |   |    | |  |/  ___/ \__  \    /     \\__  \  /  ___//  ___/  \  \/ // __ \  \____ \|  |  \/  ___//  ___<   |  |
 ///\__|    /\__|    | |  |\___ \   / __ \_ |  Y Y  \/ __ \_\___ \ \___ \|  |\   /\  ___/  |  |_> >  |  /\___ \ \___ \ \___  |
-//\________\________| |__/____  > (____  / |__|_|  (____  /____  >____  >__| \_/  \___  > |   __/|____//____  >____  >/ ____|  
+//\________\________| |__/____  > (____  / |__|_|  (____  /____  >____  >__| \_/  \___  > |   __/|____//____  >____  >/ ____|
+
+/*
+	How to optimize matrix multiplication furthur:
+	-Have each thread compute multiple outputs
+	-Check on bank conflicts
+	-Double buffering
+	-Using wider loads from shared memory
+	https://stackoverflow.com/questions/30703190/faster-matrix-multiplication-in-cuda
+*/
+
 
 // Compute C = A * B
-__global__ void matrixMultiplyShared(float *A, float *B, float *C,
-                                     int numARows, int numAColumns,
-                                     int numBRows, int numBColumns,
-                                     int numCRows, int numCColumns) {
+__global__ void matrixMultiplyShared(const float *A, const float *B, float *C) {
   //@@ Insert code to implement matrix multiplication here
   //@@ You have to use shared memory for this MP
   //@@ Insert code to implement matrix multiplication here
