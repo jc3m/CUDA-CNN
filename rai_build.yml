@@ -15,4 +15,5 @@ commands: # Recipes executed by rai
     - nice -n20 make -C /mxnet # build mxnet
     - pip install --user -e /mxnet/python # install python bindings
     # - python m2.1.py ece408-low 10000 # execute code
-    - python m3.1.py ece408-high 10000 # execute code
+    # - python m3.1.py ece408-high 10000 # execute code
+    - python final.py ece408-high 10000 #
