@@ -9,9 +9,11 @@
 #define CUDA_MAX_NUM_THREADS 1024
 
 #define TILE_WIDTH 16
+#define MIN_BATCH_SIZE 4
 
 //Fast ceil macro that doesn't require float casting
-#define int_ceil(x,y) (x + y - 1) / y;
+#define int_ceil(x,y) (x + y - 1) / y
+#define my_min(x,y) ((x > y) ? y : x)
 
 //Network constants
 //B: 10000, M: 50, C: 1, H: 28, W: 28, K: 5
@@ -42,7 +44,7 @@ namespace op
 \________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
                              \/        \/        \/              \/     \/
 */
-__global__ void matrixMultiplyShared(float *A, float *B, float *Carr) {
+__global__ void matrixMultiplyShared(float *A, float *x, float *Carr, const int b, const int B) {
     #define numARows M
     #define numAColumns C * K * K
     #define numBRows C * K * K
@@ -54,6 +56,7 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *Carr) {
 
     int Row = blockIdx.y * TILE_WIDTH + threadIdx.y;
     int Col = blockIdx.x * TILE_WIDTH + threadIdx.x;
+	 int img = b*MIN_BATCH_SIZE + blockIdx.z;
     float Pvalue = 0;
 
     for (int m = 0; m < ceil(numAColumns/(float)TILE_WIDTH); m++) {
@@ -74,8 +77,7 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *Carr) {
             int p = (w_unroll / K) % K;
             int c = w_unroll / (K * K);
             // subTileB[threadIdx.y][threadIdx.x] = B[(m*TILE_WIDTH + threadIdx.y)*numBColumns + Col];
-            float *x = B;
-            subTileB[threadIdx.y][threadIdx.x] = x4d(0, c, h_out + p, w_out + q);
+            subTileB[threadIdx.y][threadIdx.x] = x4d(img, c, h_out + p, w_out + q);
         } else {
             subTileB[threadIdx.y][threadIdx.x] = 0;
         }
@@ -90,7 +92,7 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *Carr) {
         __syncthreads();
     }
     if ((Row < numCRows) && (Col < numCColumns)) {
-        Carr[Row * numCColumns + Col] = Pvalue;
+        Carr[img * numCColumns * numCRows + Row * numCColumns + Col] = Pvalue;
     }
     #undef numARows
     #undef numAColumns
@@ -114,9 +116,9 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     // Extract the tensor dimensions into B,M,C,H,W,K
     const int B = x.shape_[0]; // Number of Images, y.shape_[0] should be the same
 
-    for (int b = 0; b < B; b++) {
-        float *xb = &(x.dptr_[b * C * H * W]);
-        float *yb = &(y.dptr_[b * M * H_out * W_out]);
+    for (int b = 0; b < int_ceil(B, MIN_BATCH_SIZE); b++) {
+        //float *xb = &(x.dptr_[b * C * H * W]);
+        //float *yb = &(y.dptr_[b * M * H_out * W_out]);
 
         // int k_rows = M;
         // int k_cols = C * K * K;
@@ -129,9 +131,9 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
         dim3 gridDim = {
             (unsigned int)ceil((float)y_cols / (float)TILE_WIDTH),
             (unsigned int)ceil((float)y_rows / (float)TILE_WIDTH),
-            1
+            (unsigned int)my_min((B - b*MIN_BATCH_SIZE), MIN_BATCH_SIZE)
         };
-        matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(w.dptr_, xb, yb);
+        matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(w.dptr_, x.dptr_, y.dptr_, b, B);
         cudaDeviceSynchronize();
     }
 
