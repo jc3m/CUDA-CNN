@@ -21,6 +21,13 @@
 #define W 28
 #define K 5
 
+#define numARows M
+#define numAColumns C * K * K
+#define numBRows C * K * K
+#define numBColumns H_out * W_out
+#define numCRows M
+#define numCColumns H_out * W_out
+
 #define H_out (H - K + 1)
 #define W_out (W - K + 1)
 // #define W_unroll (C * K * K)
@@ -45,10 +52,7 @@ namespace op
 \________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
                              \/        \/        \/              \/     \/
 */
-__global__ void matrixMultiplyShared(float *A, float *B, float *Carr,
-                                     int numARows, int numAColumns,
-                                     int numBRows, int numBColumns,
-                                     int numCRows, int numCColumns) {
+__global__ void matrixMultiplyShared(float *A, float *B, float *Carr) {
   //@@ Insert code to implement matrix multiplication here
   //@@ You have to use shared memory for this MP
   //@@ Insert code to implement matrix multiplication here
@@ -184,7 +188,7 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
             (unsigned int)ceil((float)y_rows / (float)TILE_WIDTH),
             1
         };
-        matrixMultiplyShared<<<gridDim, blockDim>>>(w.dptr_, X_unroll, yb, k_rows, k_cols, x_rows, x_cols, y_rows, y_cols);
+        matrixMultiplyShared<<<gridDim, blockDim>>>(w.dptr_, X_unroll, yb);
         cudaDeviceSynchronize();
     }
 
