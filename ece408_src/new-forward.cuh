@@ -73,7 +73,7 @@ __device__ void unroll_kernel(const int B, const int C, const int H, const int W
 
                 // X_unroll[b, h_unroll, w_unroll] = X[b, c, h_out + p, w_out + q];
                 #define X_unroll3d(i2,i1,i0) X_unroll[(i2)*(H_out * W_out * C * K * K) + (i1)*(H_out * W_out) + i0]
-                X_unroll3d(b, h_unroll, w_unroll) = x4d(b, c, h_out + p, w_out + q);
+                X_unroll3d(b, w_unroll, h_unroll) = x4d(b, c, h_out + p, w_out + q);
             }
         }
     }
