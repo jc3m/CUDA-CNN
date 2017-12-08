@@ -6,10 +6,9 @@
 #define FEATURE_NUM 64
 #define IMG_SIDE_LENGTH 24
 #define IMG_AREA (IMG_SIDE_LENGTH * IMG_SIDE_LENGTH)
-#define CUDA_MAX_NUM_THREADS 1024
 
 #define TILE_WIDTH 16
-#define MIN_BATCH_SIZE 4
+#define MIN_BATCH_SIZE 64
 
 //Fast ceil macro that doesn't require float casting
 #define int_ceil(x,y) (x + y - 1) / y
@@ -44,7 +43,7 @@ namespace op
 \________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
                              \/        \/        \/              \/     \/
 */
-__global__ void matrixMultiplyShared(float *A, float *x, float *Carr, const int b, const int B) {
+__global__ void matrixMultiplyShared(float *filters, float *x, float *Carr, const int b) {
     #define numARows M
     #define numAColumns C * K * K
     #define numBRows C * K * K
@@ -56,13 +55,13 @@ __global__ void matrixMultiplyShared(float *A, float *x, float *Carr, const int 
 
     int Row = blockIdx.y * TILE_WIDTH + threadIdx.y;
     int Col = blockIdx.x * TILE_WIDTH + threadIdx.x;
-	 int img = b*MIN_BATCH_SIZE + blockIdx.z;
+    int img = b * MIN_BATCH_SIZE + blockIdx.z;
     float Pvalue = 0;
 
     for (int m = 0; m < ceil(numAColumns/(float)TILE_WIDTH); m++) {
         // Parallel memory reads
         if ((Row < numCRows) && (m * TILE_WIDTH + threadIdx.x < numAColumns)) {
-            subTileA[threadIdx.y][threadIdx.x] = A[Row*numAColumns + m*TILE_WIDTH + threadIdx.x];
+            subTileA[threadIdx.y][threadIdx.x] = filters[Row*numAColumns + m*TILE_WIDTH + threadIdx.x];
         } else {
             subTileA[threadIdx.y][threadIdx.x] = 0;
         }
@@ -131,9 +130,9 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
         dim3 gridDim = {
             (unsigned int)ceil((float)y_cols / (float)TILE_WIDTH),
             (unsigned int)ceil((float)y_rows / (float)TILE_WIDTH),
-            (unsigned int)my_min((B - b*MIN_BATCH_SIZE), MIN_BATCH_SIZE)
+            (unsigned int)my_min((B - b * MIN_BATCH_SIZE), MIN_BATCH_SIZE)
         };
-        matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(w.dptr_, x.dptr_, y.dptr_, b, B);
+        matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(w.dptr_, x.dptr_, y.dptr_, b);
         cudaDeviceSynchronize();
     }
 
