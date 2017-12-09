@@ -7,6 +7,28 @@
 #define IMG_SIDE_LENGTH 24
 #define IMG_AREA (IMG_SIDE_LENGTH * IMG_SIDE_LENGTH)
 
+#define TILE_WIDTH 16
+#define MIN_BATCH_SIZE 64
+
+//Fast ceil macro that doesn't require float casting
+#define int_ceil(x,y) (x + y - 1) / y
+#define my_min(x,y) ((x > y) ? y : x)
+
+//Network constants
+//B: 10000, M: 50, C: 1, H: 28, W: 28, K: 5
+#define M 50    // Number of the output feature maps
+#define C 1     // Number of input feature maps
+#define H 28    // Height of an input feature map
+#define W 28    // Width of an input feature map
+#define K 5     // Side length of a filter
+
+#define H_out (H - K + 1)
+#define W_out (W - K + 1)
+
+#define y4d(i3,i2,i1,i0) y[(i3) * (M * H_out * W_out) + (i2)*(H_out * W_out) + (i1)*(W_out) + i0]
+#define x4d(i3,i2,i1,i0) x[(i3) * (C * H * W) + (i2)*(H * W) + (i1)*(W) + i0]
+#define k4d(i3,i2,i1,i0) k[(i3) * (C * K * K) + (i2)*(K * K) + (i1)*(K) + i0]
+
 #include <mxnet/base.h>
 
 namespace mxnet
@@ -14,57 +36,69 @@ namespace mxnet
 namespace op
 {
 /*
-	  ____.    ____.  .__                    ___.   .__  __         .__
+     ____.    ____.  .__                    ___.   .__  __         .__
     |    |   |    |  |__| ______  _____     \_ |__ |__|/  |_  ____ |  |__
     |    |   |    |  |  |/  ___/  \__  \     | __ \|  \   __\/ ___\|  |  \
 /\__|    /\__|    |  |  |\___ \    / __ \_   | \_\ \  ||  | \  \___|   Y  \
 \________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
-									\/        \/        \/              \/     \/
+                             \/        \/        \/              \/     \/
 */
-__global__ void forward_kernel(float *y, const float *x, const float *k, const int B, const int M, const int C, const int H, const int W, const int K) {
+__global__ void matrixMultiplyShared(float *filters, float *x, float *Carr, const int b) {
+    #define numARows M
+    #define numAColumns C * K * K
+    #define numBRows C * K * K
+    #define numBColumns H_out * W_out
+    #define numCRows M
+    #define numCColumns H_out * W_out
+    __shared__ float subTileA[TILE_WIDTH][TILE_WIDTH];
+    __shared__ float subTileB[TILE_WIDTH][TILE_WIDTH];
 
-    /*
-    Modify this function to implement the forward pass described in Chapter 16.
-    We have added an additional dimension to the tensors to support an entire mini-batch
-    The goal here is to be correct AND fast.
-    We have some nice #defs for you below to simplify indexing. Feel free to use them, or create your own.
-    */
+    int Row = blockIdx.y * TILE_WIDTH + threadIdx.y;
+    int Col = blockIdx.x * TILE_WIDTH + threadIdx.x;
+    int img = b * MIN_BATCH_SIZE + blockIdx.z;
+    float Pvalue = 0;
 
-    const int H_out = H - K + 1;
-    const int W_out = W - K + 1;
-
-    // An example use of these macros:
-    // float a = y4d(0,0,0,0)
-    // y4d(0,0,0,0) = a
-    #define y4d(i3,i2,i1,i0) y[(i3) * (M * H_out * W_out) + (i2)*(H_out * W_out) + (i1)*(W_out) + i0]
-    #define x4d(i3,i2,i1,i0) x[(i3) * (C * H * W) + (i2)*(H * W) + (i1)*(W) + i0]
-    #define k4d(i3,i2,i1,i0) k[(i3) * (C * K * K) + (i2)*(K * K) + (i1)*(K) + i0]
-
-    /*
-        Your code here!
-    */
-    int img = blockIdx.x;										// b
-    int feature = blockIdx.y;									// m
-    int width = threadIdx.x;
-    int height = threadIdx.y;
-
-    if (height < H && width < W) {
-        float sum = 0.0f;
-        // Sum over all feature maps
-        for (int c = 0; c < C; ++c) {
-            // Single convolution step: KxK filter
-            for (int p = 0; p < K; ++p) {
-                for (int q = 0; q < K; ++q) {
-                    sum += x4d(img, c, height + p, width + q) * k4d(feature, c, p, q);
-                }
-            }
+    for (int m = 0; m < ceil(numAColumns/(float)TILE_WIDTH); m++) {
+        // Parallel memory reads
+        if ((Row < numCRows) && (m * TILE_WIDTH + threadIdx.x < numAColumns)) {
+            subTileA[threadIdx.y][threadIdx.x] = filters[Row*numAColumns + m*TILE_WIDTH + threadIdx.x];
+        } else {
+            subTileA[threadIdx.y][threadIdx.x] = 0;
         }
-        y4d(img, feature, height, width) = sum;
-    }
 
-    #undef y4d
-    #undef x4d
-    #undef k4d
+        if ((m * TILE_WIDTH + threadIdx.y < numBRows) && (Col < numCColumns)) {
+            // subTileB[threadIdx.y][threadIdx.x] = B[m*TILE_WIDTH + threadIdx.y][]
+            int w_unroll = m * TILE_WIDTH + threadIdx.y;
+            int h_unroll = Col;
+            int w_out = h_unroll % W_out;
+            int h_out = h_unroll / W_out;
+            int q = w_unroll % K;
+            int p = (w_unroll / K) % K;
+            int c = w_unroll / (K * K);
+            // subTileB[threadIdx.y][threadIdx.x] = B[(m*TILE_WIDTH + threadIdx.y)*numBColumns + Col];
+            subTileB[threadIdx.y][threadIdx.x] = x4d(img, c, h_out + p, w_out + q);
+        } else {
+            subTileB[threadIdx.y][threadIdx.x] = 0;
+        }
+
+        __syncthreads();
+
+        // Tile calculation
+        for (int k = 0; k < TILE_WIDTH; k++) {
+            Pvalue += subTileA[threadIdx.y][k] * subTileB[k][threadIdx.x];
+        }
+
+        __syncthreads();
+    }
+    if ((Row < numCRows) && (Col < numCColumns)) {
+        Carr[img * numCColumns * numCRows + Row * numCColumns + Col] = Pvalue;
+    }
+    #undef numARows
+    #undef numAColumns
+    #undef numBRows
+    #undef numBColumns
+    #undef numCRows
+    #undef numCColumns
 }
 
 /*
@@ -75,37 +109,32 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
 template<>
 void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tensor<gpu, 4, float> &x, const mshadow::Tensor<gpu, 4, float> &w) {
 
-    // Use mxnet's CHECK_EQ to do assertions.
-    // Remove this assertion when you do your implementation!
-    // CHECK_EQ(0, 1) << "Missing an ECE408 GPU implementation!";
-
     // You'll probably need to launch kernels against the right stream to keep MXNet happy
     cudaStream_t s = y.stream_->stream_;
 
     // Extract the tensor dimensions into B,M,C,H,W,K
     const int B = x.shape_[0]; // Number of Images, y.shape_[0] should be the same
-    const int M = y.shape_[1]; // Number of the output feature maps
-    const int C = x.shape_[1]; // Number of input feature maps
-    const int H = x.shape_[2]; // Height of an input feature map
-    const int W = x.shape_[3]; // Width of an input feature map
-    const int K = w.shape_[3]; // Side length of a filter
 
-    // Set the kernel dimensions
-    const int H_out = H - K + 1;
-    const int W_out = W - K + 1;
-    dim3 gridDim = {
-        (unsigned int)B,
-        (unsigned int)M,
-        1
-    };
-    dim3 blockDim = {
-        (unsigned int)W_out,
-        (unsigned int)H_out,
-        1
-    };
+    for (int b = 0; b < int_ceil(B, MIN_BATCH_SIZE); b++) {
+        //float *xb = &(x.dptr_[b * C * H * W]);
+        //float *yb = &(y.dptr_[b * M * H_out * W_out]);
 
-    // Call the kernel
-    forward_kernel<<<gridDim, blockDim, 0, s>>>(y.dptr_,x.dptr_,w.dptr_, B,M,C,H,W,K);
+        // int k_rows = M;
+        // int k_cols = C * K * K;
+        // int x_rows = C * K * K;
+        // int x_cols = H_out * W_out;
+        int y_rows = M;
+        int y_cols = H_out * W_out;
+
+        dim3 blockDim = { TILE_WIDTH, TILE_WIDTH, 1 };
+        dim3 gridDim = {
+            (unsigned int)ceil((float)y_cols / (float)TILE_WIDTH),
+            (unsigned int)ceil((float)y_rows / (float)TILE_WIDTH),
+            (unsigned int)my_min((B - b * MIN_BATCH_SIZE), MIN_BATCH_SIZE)
+        };
+        matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(w.dptr_, x.dptr_, y.dptr_, b);
+        cudaDeviceSynchronize();
+    }
 
     // Use MSHADOW_CUDA_CALL to check for CUDA runtime errors.
     MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
