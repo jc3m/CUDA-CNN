@@ -9,7 +9,7 @@
 #define CUDA_MAX_NUM_THREADS 1024
 
 #define TILE_WIDTH 16
-#define MIN_BATCH_SIZE 4
+#define MIN_BATCH_SIZE 8
 
 //Fast ceil macro that doesn't require float casting
 #define int_ceil(x,y) (x + y - 1) / y
@@ -44,6 +44,19 @@ namespace op
 \________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
                              \/        \/        \/              \/     \/
 */
+
+__device__ int3 get_b_idxs(int m, int ty, int Col)
+{
+  int w_unroll = m * TILE_WIDTH + ty;
+  int h_unroll = Col;
+  int w_out = h_unroll % W_out;
+  int h_out = h_unroll / W_out;
+  int q = w_unroll % K;
+  int p = (w_unroll / K) % K;
+  int c = w_unroll / (K * K);
+  return make_int3(c, h_out + p, w_out + q);
+}
+
 __global__ void matrixMultiplyShared(float *A, float *x, float *Carr, const int b, const int B) {
     #define numARows M
     #define numAColumns C * K * K
@@ -51,55 +64,78 @@ __global__ void matrixMultiplyShared(float *A, float *x, float *Carr, const int 
     #define numBColumns H_out * W_out
     #define numCRows M
     #define numCColumns H_out * W_out
-    __shared__ float subTileA[TILE_WIDTH][TILE_WIDTH];
-    __shared__ float subTileB[TILE_WIDTH][TILE_WIDTH];
+    #define MUL_LOOP_ITER int_ceil(numAColumns, TILE_WIDTH)
+    #define size_A (numARows * numAColumns)
+    #define size_B (MIN_BATCH_SIZE * C * H * W)
 
-    int Row = blockIdx.y * TILE_WIDTH + threadIdx.y;
-    int Col = blockIdx.x * TILE_WIDTH + threadIdx.x;
+    //Since each kernel is a single image, we can coalesce by having all threads work together to load the image's data into shared memory to start
+    __shared__ float shared_A[size_A];
+    __shared__ float shared_B[size_B];
+
 	 int img = b*MIN_BATCH_SIZE + blockIdx.z;
-    float Pvalue = 0;
+    int total_threads = TILE_WIDTH * TILE_WIDTH * blockDim.x * blockDim.y * blockDim.z;
+    int width = TILE_WIDTH * blockDim.x;
+    int lin_idx_x = blockIdx.x * TILE_WIDTH + threadIdx.x;
+    int lin_idx_y = blockIdx.y * TILE_WIDTH + threadIdx.y;
+    int lin_idx = (width * width) * blockIdx.z + lin_idx_y * width + lin_idx_x;
 
-    for (int m = 0; m < ceil(numAColumns/(float)TILE_WIDTH); m++) {
-        // Parallel memory reads
-        if ((Row < numCRows) && (m * TILE_WIDTH + threadIdx.x < numAColumns)) {
-            subTileA[threadIdx.y][threadIdx.x] = A[Row*numAColumns + m*TILE_WIDTH + threadIdx.x];
-        } else {
-            subTileA[threadIdx.y][threadIdx.x] = 0;
-        }
-
-        if ((m * TILE_WIDTH + threadIdx.y < numBRows) && (Col < numCColumns)) {
-            // subTileB[threadIdx.y][threadIdx.x] = B[m*TILE_WIDTH + threadIdx.y][]
-            int w_unroll = m * TILE_WIDTH + threadIdx.y;
-            int h_unroll = Col;
-            int w_out = h_unroll % W_out;
-            int h_out = h_unroll / W_out;
-            int q = w_unroll % K;
-            int p = (w_unroll / K) % K;
-            int c = w_unroll / (K * K);
-            // subTileB[threadIdx.y][threadIdx.x] = B[(m*TILE_WIDTH + threadIdx.y)*numBColumns + Col];
-            subTileB[threadIdx.y][threadIdx.x] = x4d(img, c, h_out + p, w_out + q);
-        } else {
-            subTileB[threadIdx.y][threadIdx.x] = 0;
-        }
-
-        __syncthreads();
-
-        // Tile calculation
-        for (int k = 0; k < TILE_WIDTH; k++) {
-            Pvalue += subTileA[threadIdx.y][k] * subTileB[k][threadIdx.x];
-        }
-
-        __syncthreads();
+    int i = lin_idx;
+    while(i < size_B) {
+      shared_B[i] = x[i];
+      i += total_threads;
     }
-    if ((Row < numCRows) && (Col < numCColumns)) {
-        Carr[img * numCColumns * numCRows + Row * numCColumns + Col] = Pvalue;
+
+    i = lin_idx;
+    while(i < size_A) {
+      shared_A[i] = A[i];
+      i += total_threads;
     }
-    #undef numARows
-    #undef numAColumns
-    #undef numBRows
-    #undef numBColumns
-    #undef numCRows
-    #undef numCColumns
+
+    __syncthreads();
+
+    for(int i = 0; i < int_ceil(numCColumns,TILE_WIDTH); i++) {
+      for(int j = 0; j < int_ceil(numCRows,TILE_WIDTH); j++) {
+         int Row = j * width + blockIdx.y * TILE_WIDTH + threadIdx.y;
+         int Col = i * width + blockIdx.x * TILE_WIDTH + threadIdx.x;
+
+         float p_value = 0.0f;
+         for(int m = 0; m < numAColumns; m++) {
+            int3 idxs_B = get_b_idxs(m, threadIdx.y, Col);
+            float B_val = shared_B[C*H*W*blockIdx.z + H*W*idxs_B.x + H*idxs_B.y + idxs_B.z];
+            //float B_val = shared_B[idxs_B.x][idxs_B.y][idxs_B.z];
+            float A_val = shared_A[Row*numAColumns + Col];
+            p_value += A_val * B_val;
+         }
+         if(Row < numCRows && Col < numCColumns)
+            Carr[img * numCColumns * numCRows + Row * numCColumns + Col] = p_value;
+      }
+   }
+
+   /*
+
+       //Read global memory coalesced
+       for(int i = 0; i < int_ceil(H,TILE_WIDTH); i++) {
+         for(int j = 0; j < int_ceil(W,TILE_WIDTH); j++) {
+            int Row = (blockIdx.y + blockDim.y * j) * TILE_WIDTH + threadIdx.y;
+            int Col = (blockIdx.x + blockDim.y * i) * TILE_WIDTH + threadIdx.x;
+
+            if(Col < W && Row < H) {
+              shared_B[blockIdx.z][0][Row][Col] = x4d(img, 0, Row, Col);
+              shared_B[blockIdx.z][1][Row][Col] = x4d(img, 1, Row, Col);
+            }
+         }
+      }
+
+       for(int i = 0; i < int_ceil(numAColumns,TILE_WIDTH); i++) {
+         for(int j = 0; j < int_ceil(numARows,TILE_WIDTH); j++) {
+            int Row = (blockIdx.y + blockDim.y * j) * TILE_WIDTH + threadIdx.y;
+            int Col = (blockIdx.x + blockDim.y * i) * TILE_WIDTH + threadIdx.x;
+
+            if(Col < numAColumns && Row < numARows)
+              shared_A[Row][Col] = A[Row * numAColumns + Col];
+         }
+       }
+       __syncthreads();*/
 }
 
 /*
@@ -117,25 +153,19 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     const int B = x.shape_[0]; // Number of Images, y.shape_[0] should be the same
 
     for (int b = 0; b < int_ceil(B, MIN_BATCH_SIZE); b++) {
-        //float *xb = &(x.dptr_[b * C * H * W]);
-        //float *yb = &(y.dptr_[b * M * H_out * W_out]);
-
-        // int k_rows = M;
-        // int k_cols = C * K * K;
-        // int x_rows = C * K * K;
-        // int x_cols = H_out * W_out;
         int y_rows = M;
         int y_cols = H_out * W_out;
 
         dim3 blockDim = { TILE_WIDTH, TILE_WIDTH, 1 };
         dim3 gridDim = {
-            (unsigned int)ceil((float)y_cols / (float)TILE_WIDTH),
-            (unsigned int)ceil((float)y_rows / (float)TILE_WIDTH),
+            (unsigned int)int_ceil(y_cols, TILE_WIDTH),
+            (unsigned int)int_ceil(y_rows, TILE_WIDTH),
             (unsigned int)my_min((B - b*MIN_BATCH_SIZE), MIN_BATCH_SIZE)
         };
-        matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(w.dptr_, x.dptr_, y.dptr_, b, B);
-        cudaDeviceSynchronize();
+        matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(w.dptr_, &((x.dptr_)[(C * K * K) * b*MIN_BATCH_SIZE]), y.dptr_, b, B);
+
     }
+	 cudaDeviceSynchronize();
 
     // Use MSHADOW_CUDA_CALL to check for CUDA runtime errors.
     MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
