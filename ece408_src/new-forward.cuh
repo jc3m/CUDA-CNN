@@ -56,8 +56,16 @@ __global__ void matrixMultiplyShared(float *arr_A, float *arr_B, float *arr_C) {
     /*****************/
     __shared__ float filters_shared[TOTAL_FILTER_SIZE]; //filters_shared[M][FILTER_SIZE]
     __shared__ float x_shared[H * W];
+    // __shared__ unsigned int shared_h_out[THREADS_PER_BLOCK];
+    // __shared__ unsigned int shared_w_out[THREADS_PER_BLOCK];
+    // __shared__ unsigned int shared_h_unroll[THREADS_PER_BLOCK];
+    // __shared__ unsigned int shared_y_out[THREADS_PER_BLOCK];
+    // #define h_out shared_h_out[linear_idx]
+    // #define w_out shared_w_out[linear_idx]
+    // #define h_unroll shared_h_unroll[linear_idx]
+    // #define y_out shared_y_out[linear_idx]
 
-    unsigned int linear_idx = threadIdx.y * BLOCK_DIM_X + threadIdx.x;
+    volatile unsigned int linear_idx = threadIdx.y * BLOCK_DIM_X + threadIdx.x;
 
     /**************************************/
     /* Loading filter into shared memeory */
@@ -82,20 +90,20 @@ __global__ void matrixMultiplyShared(float *arr_A, float *arr_B, float *arr_C) {
     __dankthreads();
 
     float result;
-    volatile unsigned int h_out, w_out, h_unroll, y_out;
+    unsigned int h_out, w_out, h_unroll, y_out;
 
-    #pragma unroll
+    //#pragma unroll
     for (int i = 0; i < THREADX_DIVISOR; i++) {
         h_unroll = i * BLOCK_DIM_X + threadIdx.x;
         h_out = h_unroll / W_out;
         w_out = h_unroll % W_out;
-        #pragma unroll
+        //#pragma unroll
         for (int j = 0; j < THREADY_DIVISOR; j++) {
             result = 0.0f;
             y_out = (j * BLOCK_DIM_Y + threadIdx.y);
-            #pragma unroll
+            //#pragma unroll
             for (int p = 0; p < K; p++) {
-                #pragma unroll
+                //#pragma unroll
                 for (int q = 0; q < K; q++) {
                     result += x_shared[(h_out + p) * W + w_out + q] * filters_shared[y_out * FILTER_SIZE + p * K + q];
                 }
