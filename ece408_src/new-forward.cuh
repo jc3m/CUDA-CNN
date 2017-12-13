@@ -2,20 +2,17 @@
 #ifndef MXNET_OPERATOR_NEW_FORWARD_CUH_
 #define MXNET_OPERATOR_NEW_FORWARD_CUH_
 
-#define IMG_NUM 64
-#define FEATURE_NUM 64
 #define IMG_SIDE_LENGTH 24
 #define IMG_AREA (IMG_SIDE_LENGTH * IMG_SIDE_LENGTH)
 
-#define TILE_WIDTH 16
-#define MIN_BATCH_SIZE 64
-
-//Fast ceil macro that doesn't require float casting
+// Fast ceil macro that doesn't require float casting
 #define int_ceil(x,y) (x + y - 1) / y
 #define my_min(x,y) ((x > y) ? y : x)
 
-//Network constants
-//B: 10000, M: 50, C: 1, H: 28, W: 28, K: 5
+#define __dankthreads __syncthreads
+
+// Network constants
+// B: 10000, M: 50, C: 1, H: 28, W: 28, K: 5
 #define M 50    // Number of the output feature maps
 #define C 1     // Number of input feature maps
 #define H 28    // Height of an input feature map
@@ -25,9 +22,19 @@
 #define H_out (H - K + 1)
 #define W_out (W - K + 1)
 
-#define y4d(i3,i2,i1,i0) y[(i3) * (M * H_out * W_out) + (i2)*(H_out * W_out) + (i1)*(W_out) + i0]
-#define x4d(i3,i2,i1,i0) x[(i3) * (C * H * W) + (i2)*(H * W) + (i1)*(W) + i0]
-#define k4d(i3,i2,i1,i0) k[(i3) * (C * K * K) + (i2)*(K * K) + (i1)*(K) + i0]
+#define INPUT_FEATURE_SIZE (H * W)
+#define OUTPUT_FEATURE_SIZE (H_out * W_out)
+#define FILTER_SIZE (K * K)
+#define TOTAL_FILTER_SIZE (M * FILTER_SIZE)
+
+// We'll have each thread compute THEADX_DIVISOR * THREADY_DIVISOR
+// elements in the final output matrix
+#define THREADX_DIVISOR 6
+#define THREADY_DIVISOR 5
+
+#define BLOCK_DIM_X (OUTPUT_FEATURE_SIZE / THREADX_DIVISOR)
+#define BLOCK_DIM_Y (M / THREADY_DIVISOR)
+#define THREADS_PER_BLOCK (BLOCK_DIM_X * BLOCK_DIM_Y)
 
 #include <mxnet/base.h>
 
@@ -43,62 +50,69 @@ namespace op
 \________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
                              \/        \/        \/              \/     \/
 */
-__global__ void matrixMultiplyShared(float *filters, float *x, float *Carr, const int b) {
-    #define numARows M
-    #define numAColumns C * K * K
-    #define numBRows C * K * K
-    #define numBColumns H_out * W_out
-    #define numCRows M
-    #define numCColumns H_out * W_out
-    __shared__ float subTileA[TILE_WIDTH][TILE_WIDTH];
-    __shared__ float subTileB[TILE_WIDTH][TILE_WIDTH];
+__global__ void matrixMultiplyShared(float *arr_A, float *arr_B, float *arr_C) {
+    /*****************/
+    /* Shared Memory */
+    /*****************/
+    __shared__ float filters_shared[TOTAL_FILTER_SIZE]; //filters_shared[M][FILTER_SIZE]
+    __shared__ float x_shared[H * W];
+    // __shared__ unsigned int shared_h_out[THREADS_PER_BLOCK];
+    // __shared__ unsigned int shared_w_out[THREADS_PER_BLOCK];
+    // __shared__ unsigned int shared_h_unroll[THREADS_PER_BLOCK];
+    // __shared__ unsigned int shared_y_out[THREADS_PER_BLOCK];
+    // #define h_out shared_h_out[linear_idx]
+    // #define w_out shared_w_out[linear_idx]
+    // #define h_unroll shared_h_unroll[linear_idx]
+    // #define y_out shared_y_out[linear_idx]
 
-    int Row = blockIdx.y * TILE_WIDTH + threadIdx.y;
-    int Col = blockIdx.x * TILE_WIDTH + threadIdx.x;
-    int img = b * MIN_BATCH_SIZE + blockIdx.z;
-    float Pvalue = 0;
+    volatile unsigned int linear_idx = threadIdx.y * BLOCK_DIM_X + threadIdx.x;
 
-    for (int m = 0; m < ceil(numAColumns/(float)TILE_WIDTH); m++) {
-        // Parallel memory reads
-        if ((Row < numCRows) && (m * TILE_WIDTH + threadIdx.x < numAColumns)) {
-            subTileA[threadIdx.y][threadIdx.x] = filters[Row*numAColumns + m*TILE_WIDTH + threadIdx.x];
-        } else {
-            subTileA[threadIdx.y][threadIdx.x] = 0;
-        }
-
-        if ((m * TILE_WIDTH + threadIdx.y < numBRows) && (Col < numCColumns)) {
-            // subTileB[threadIdx.y][threadIdx.x] = B[m*TILE_WIDTH + threadIdx.y][]
-            int w_unroll = m * TILE_WIDTH + threadIdx.y;
-            int h_unroll = Col;
-            int w_out = h_unroll % W_out;
-            int h_out = h_unroll / W_out;
-            int q = w_unroll % K;
-            int p = (w_unroll / K) % K;
-            int c = w_unroll / (K * K);
-            // subTileB[threadIdx.y][threadIdx.x] = B[(m*TILE_WIDTH + threadIdx.y)*numBColumns + Col];
-            subTileB[threadIdx.y][threadIdx.x] = x4d(img, c, h_out + p, w_out + q);
-        } else {
-            subTileB[threadIdx.y][threadIdx.x] = 0;
-        }
-
-        __syncthreads();
-
-        // Tile calculation
-        for (int k = 0; k < TILE_WIDTH; k++) {
-            Pvalue += subTileA[threadIdx.y][k] * subTileB[k][threadIdx.x];
-        }
-
-        __syncthreads();
+    /**************************************/
+    /* Loading filter into shared memeory */
+    /**************************************/
+    if (linear_idx < TOTAL_FILTER_SIZE/2) {
+        filters_shared[linear_idx] = arr_A[linear_idx];
+        filters_shared[linear_idx + TOTAL_FILTER_SIZE/2] = arr_A[linear_idx + TOTAL_FILTER_SIZE/2];
     }
-    if ((Row < numCRows) && (Col < numCColumns)) {
-        Carr[img * numCColumns * numCRows + Row * numCColumns + Col] = Pvalue;
+
+    /**************************************************/
+    /* Loading input feature maps into shared memeory */
+    /**************************************************/
+    #define FIRST_THREAD_X (THREADS_PER_BLOCK - INPUT_FEATURE_SIZE/2)
+    if (linear_idx >= FIRST_THREAD_X) {
+        unsigned int normalized_idx = linear_idx - FIRST_THREAD_X;
+        unsigned int offset = blockIdx.x * INPUT_FEATURE_SIZE;
+        x_shared[normalized_idx] = arr_B[offset + normalized_idx];
+        x_shared[normalized_idx + INPUT_FEATURE_SIZE/2] = arr_B[offset + normalized_idx + INPUT_FEATURE_SIZE/2];
     }
-    #undef numARows
-    #undef numAColumns
-    #undef numBRows
-    #undef numBColumns
-    #undef numCRows
-    #undef numCColumns
+    #undef FIRST_THREAD_X
+
+    __dankthreads();
+
+    float result;
+    unsigned int h_out, w_out, h_unroll, y_out;
+
+    //#pragma unroll
+    for (int i = 0; i < THREADX_DIVISOR; i++) {
+        h_unroll = i * BLOCK_DIM_X + threadIdx.x;
+        h_out = h_unroll / W_out;
+        w_out = h_unroll % W_out;
+        #pragma unroll
+        for (int j = 0; j < THREADY_DIVISOR; j++) {
+            result = 0.0f;
+            y_out = (j * BLOCK_DIM_Y + threadIdx.y);
+            #pragma unroll
+            for (int p = 0; p < K; p++) {
+                #pragma unroll
+                for (int q = 0; q < K; q++) {
+                    result += x_shared[(h_out + p) * W + w_out + q] * filters_shared[y_out * FILTER_SIZE + p * K + q];
+                }
+            }
+            #define c3d(i1,i2,i3) arr_C[i1 * H_out * W_out * M + i2 * H_out * W_out + i3]
+            c3d(blockIdx.x, y_out, h_unroll) = result;
+        }
+    }
+
 }
 
 /*
@@ -107,39 +121,27 @@ __global__ void matrixMultiplyShared(float *filters, float *x, float *Carr, cons
    For ECE408, we only expect the float version of the operator to be called, so here we specialize with only floats.
 */
 template<>
-void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tensor<gpu, 4, float> &x, const mshadow::Tensor<gpu, 4, float> &w) {
+void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tensor<gpu, 4, float> &x,
+                         const mshadow::Tensor<gpu, 4, float> &w) {
 
     // You'll probably need to launch kernels against the right stream to keep MXNet happy
     cudaStream_t s = y.stream_->stream_;
 
     // Extract the tensor dimensions into B,M,C,H,W,K
-    const int B = x.shape_[0]; // Number of Images, y.shape_[0] should be the same
+    const unsigned int B = x.shape_[0]; // Number of Images, y.shape_[0] should be the same
 
-    for (int b = 0; b < int_ceil(B, MIN_BATCH_SIZE); b++) {
-        //float *xb = &(x.dptr_[b * C * H * W]);
-        //float *yb = &(y.dptr_[b * M * H_out * W_out]);
+    dim3 gridDim = { B, 1, 1 };
+    dim3 blockDim = { BLOCK_DIM_X, BLOCK_DIM_Y, 1 };
 
-        // int k_rows = M;
-        // int k_cols = C * K * K;
-        // int x_rows = C * K * K;
-        // int x_cols = H_out * W_out;
-        int y_rows = M;
-        int y_cols = H_out * W_out;
-
-        dim3 blockDim = { TILE_WIDTH, TILE_WIDTH, 1 };
-        dim3 gridDim = {
-            (unsigned int)ceil((float)y_cols / (float)TILE_WIDTH),
-            (unsigned int)ceil((float)y_rows / (float)TILE_WIDTH),
-            (unsigned int)my_min((B - b * MIN_BATCH_SIZE), MIN_BATCH_SIZE)
-        };
-        matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(w.dptr_, x.dptr_, y.dptr_, b);
-        cudaDeviceSynchronize();
+    matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(w.dptr_, x.dptr_, y.dptr_);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("Error: %s\n", cudaGetErrorString(err));
     }
 
     // Use MSHADOW_CUDA_CALL to check for CUDA runtime errors.
     MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
 }
-
 
 /*
     This tells mxnet how to do an op when it's not a float.
