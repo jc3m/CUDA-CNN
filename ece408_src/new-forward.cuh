@@ -97,13 +97,13 @@ __global__ void matrixMultiplyShared(float *arr_A, float *arr_B, float *arr_C) {
         h_unroll = i * BLOCK_DIM_X + threadIdx.x;
         h_out = h_unroll / W_out;
         w_out = h_unroll % W_out;
-        //#pragma unroll
+        #pragma unroll
         for (int j = 0; j < THREADY_DIVISOR; j++) {
             result = 0.0f;
             y_out = (j * BLOCK_DIM_Y + threadIdx.y);
-            //#pragma unroll
+            #pragma unroll
             for (int p = 0; p < K; p++) {
-                //#pragma unroll
+                #pragma unroll
                 for (int q = 0; q < K; q++) {
                     result += x_shared[(h_out + p) * W + w_out + q] * filters_shared[y_out * FILTER_SIZE + p * K + q];
                 }
