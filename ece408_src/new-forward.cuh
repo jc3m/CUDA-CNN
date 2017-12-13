@@ -82,7 +82,7 @@ __global__ void matrixMultiplyShared(float *arr_A, float *arr_B, float *arr_C) {
     __dankthreads();
 
     float result;
-    unsigned int h_out, w_out, h_unroll, y_out;
+    volatile unsigned int h_out, w_out, h_unroll, y_out;
 
     #pragma unroll
     for (int i = 0; i < THREADX_DIVISOR; i++) {
@@ -90,7 +90,7 @@ __global__ void matrixMultiplyShared(float *arr_A, float *arr_B, float *arr_C) {
         h_out = h_unroll / W_out;
         w_out = h_unroll % W_out;
         #pragma unroll
-        for (int j = 0; i < THREADY_DIVISOR; j++) {
+        for (int j = 0; j < THREADY_DIVISOR; j++) {
             result = 0.0f;
             y_out = (j * BLOCK_DIM_Y + threadIdx.y);
             #pragma unroll
