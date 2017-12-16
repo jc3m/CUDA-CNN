@@ -2,13 +2,6 @@
 #ifndef MXNET_OPERATOR_NEW_FORWARD_CUH_
 #define MXNET_OPERATOR_NEW_FORWARD_CUH_
 
-#define IMG_SIDE_LENGTH 24
-#define IMG_AREA (IMG_SIDE_LENGTH * IMG_SIDE_LENGTH)
-
-// Fast ceil macro that doesn't require float casting
-#define int_ceil(x,y) (x + y - 1) / y
-#define my_min(x,y) ((x > y) ? y : x)
-
 #define __dankthreads __syncthreads
 
 // Network constants
@@ -56,16 +49,8 @@ __global__ void matrixMultiplyShared(float *arr_A, float *arr_B, float *arr_C) {
     /*****************/
     __shared__ float filters_shared[TOTAL_FILTER_SIZE]; //filters_shared[M][FILTER_SIZE]
     __shared__ float x_shared[H * W];
-    // __shared__ unsigned int shared_h_out[THREADS_PER_BLOCK];
-    // __shared__ unsigned int shared_w_out[THREADS_PER_BLOCK];
-    // __shared__ unsigned int shared_h_unroll[THREADS_PER_BLOCK];
-    // __shared__ unsigned int shared_y_out[THREADS_PER_BLOCK];
-    // #define h_out shared_h_out[linear_idx]
-    // #define w_out shared_w_out[linear_idx]
-    // #define h_unroll shared_h_unroll[linear_idx]
-    // #define y_out shared_y_out[linear_idx]
 
-    volatile unsigned int linear_idx = threadIdx.y * BLOCK_DIM_X + threadIdx.x;
+    unsigned int linear_idx = threadIdx.y * BLOCK_DIM_X + threadIdx.x;
 
     /**************************************/
     /* Loading filter into shared memeory */
@@ -110,6 +95,7 @@ __global__ void matrixMultiplyShared(float *arr_A, float *arr_B, float *arr_C) {
             }
             #define c3d(i1,i2,i3) arr_C[i1 * H_out * W_out * M + i2 * H_out * W_out + i3]
             c3d(blockIdx.x, y_out, h_unroll) = result;
+            #undef c3d
         }
     }
 
