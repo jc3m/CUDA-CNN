@@ -43,46 +43,32 @@ namespace op
 \________\________|  |__/____  >  (____  /   |___  /__||__|  \___  >___|  /
                              \/        \/        \/              \/     \/
 */
-__global__ void matrixMultiplyShared(float *arr_A, float *arr_B, float *arr_C) {
+
+__constant__ float filters_const[TOTAL_FILTER_SIZE]; // filters_const[M][FILTER_SIZE]
+
+__global__ void matrixMultiplyShared(float *arr_B, float *arr_C) {
     /*****************/
     /* Shared Memory */
     /*****************/
-    __shared__ float filters_shared[TOTAL_FILTER_SIZE]; //filters_shared[M][FILTER_SIZE]
     __shared__ float x_shared[H * W];
 
     unsigned int linear_idx = threadIdx.y * BLOCK_DIM_X + threadIdx.x;
 
-    /**************************************/
-    /* Loading filter into shared memeory */
-    /**************************************/
-    if (linear_idx < TOTAL_FILTER_SIZE/2) {
-        filters_shared[linear_idx] = arr_A[linear_idx];
-        filters_shared[linear_idx + TOTAL_FILTER_SIZE/2] = arr_A[linear_idx + TOTAL_FILTER_SIZE/2];
-    }
-
     /**************************************************/
     /* Loading input feature maps into shared memeory */
     /**************************************************/
-    #define FIRST_THREAD_X (THREADS_PER_BLOCK - INPUT_FEATURE_SIZE/2)
-    if (linear_idx >= FIRST_THREAD_X) {
-        unsigned int normalized_idx = linear_idx - FIRST_THREAD_X;
-        unsigned int offset = blockIdx.x * INPUT_FEATURE_SIZE;
-        x_shared[normalized_idx] = arr_B[offset + normalized_idx];
-        x_shared[normalized_idx + INPUT_FEATURE_SIZE/2] = arr_B[offset + normalized_idx + INPUT_FEATURE_SIZE/2];
+    if (linear_idx < INPUT_FEATURE_SIZE) {
+        x_shared[linear_idx] = arr_B[blockIdx.x * INPUT_FEATURE_SIZE + linear_idx];
     }
-    #undef FIRST_THREAD_X
-
     __dankthreads();
 
     float result;
     unsigned int h_out, w_out, h_unroll, y_out;
 
-    //#pragma unroll
     for (int i = 0; i < THREADX_DIVISOR; i++) {
         h_unroll = i * BLOCK_DIM_X + threadIdx.x;
         h_out = h_unroll / W_out;
         w_out = h_unroll % W_out;
-        #pragma unroll
         for (int j = 0; j < THREADY_DIVISOR; j++) {
             result = 0.0f;
             y_out = (j * BLOCK_DIM_Y + threadIdx.y);
@@ -90,7 +76,7 @@ __global__ void matrixMultiplyShared(float *arr_A, float *arr_B, float *arr_C) {
             for (int p = 0; p < K; p++) {
                 #pragma unroll
                 for (int q = 0; q < K; q++) {
-                    result += x_shared[(h_out + p) * W + w_out + q] * filters_shared[y_out * FILTER_SIZE + p * K + q];
+                    result += x_shared[(h_out + p) * W + w_out + q] * filters_const[y_out * FILTER_SIZE + p * K + q];
                 }
             }
             #define c3d(i1,i2,i3) arr_C[i1 * H_out * W_out * M + i2 * H_out * W_out + i3]
@@ -98,7 +84,6 @@ __global__ void matrixMultiplyShared(float *arr_A, float *arr_B, float *arr_C) {
             #undef c3d
         }
     }
-
 }
 
 /*
@@ -113,13 +98,15 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     // You'll probably need to launch kernels against the right stream to keep MXNet happy
     cudaStream_t s = y.stream_->stream_;
 
+    cudaMemcpyToSymbol(filters_const, (void*)w.dptr_, TOTAL_FILTER_SIZE * sizeof(float));
+
     // Extract the tensor dimensions into B,M,C,H,W,K
     const unsigned int B = x.shape_[0]; // Number of Images, y.shape_[0] should be the same
 
     dim3 gridDim = { B, 1, 1 };
     dim3 blockDim = { BLOCK_DIM_X, BLOCK_DIM_Y, 1 };
 
-    matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(w.dptr_, x.dptr_, y.dptr_);
+    matrixMultiplyShared<<<gridDim, blockDim, 0, s>>>(x.dptr_, y.dptr_);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         printf("Error: %s\n", cudaGetErrorString(err));
