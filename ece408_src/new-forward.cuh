@@ -22,8 +22,8 @@
 
 // We'll have each thread compute THEADX_DIVISOR * THREADY_DIVISOR
 // elements in the final output matrix
-#define THREADX_DIVISOR 6
-#define THREADY_DIVISOR 5
+#define THREADX_DIVISOR 1
+#define THREADY_DIVISOR 50
 
 #define BLOCK_DIM_X (OUTPUT_FEATURE_SIZE / THREADX_DIVISOR)
 #define BLOCK_DIM_Y (M / THREADY_DIVISOR)
@@ -57,9 +57,15 @@ __global__ void matrixMultiplyShared(float *arr_B, float *arr_C) {
     /**************************************************/
     /* Loading input feature maps into shared memeory */
     /**************************************************/
-    if (linear_idx < INPUT_FEATURE_SIZE) {
-        x_shared[linear_idx] = arr_B[blockIdx.x * INPUT_FEATURE_SIZE + linear_idx];
+    #define NUM_LOADS 2
+    if (linear_idx < (INPUT_FEATURE_SIZE / NUM_LOADS)) {
+        unsigned int offset = blockIdx.x * INPUT_FEATURE_SIZE + linear_idx;
+        #pragma unroll
+        for (int i = 0; i < NUM_LOADS; i++) {
+            x_shared[linear_idx + i * (INPUT_FEATURE_SIZE / NUM_LOADS)] = arr_B[offset + i * (INPUT_FEATURE_SIZE / NUM_LOADS)];
+        }
     }
+    #undef NUM_LOADS
     __dankthreads();
 
     float result;
